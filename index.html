@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>美容室 改装 3Dモデル</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1d21;
+    font-family: "Hiragino Sans", "Yu Gothic", system-ui, sans-serif; }
+  #app { width: 100vw; height: 100vh; display: block; }
+  #panel {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    background: rgba(28,31,36,.86); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+    padding: 14px 16px; color: #e8eaed; max-width: 260px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.4);
+  }
+  #panel h1 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  #panel .sub { font-size: 11px; color: #9aa0a6; margin-bottom: 10px; line-height: 1.5; }
+  #panel .dims { font-size: 12px; color: #c7ccd1; line-height: 1.7; margin-bottom: 10px; }
+  #panel .dims b { color: #8ab4f8; font-variant-numeric: tabular-nums; }
+  .ctrl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #c7ccd1; }
+  .ctrl input[type=range] { flex: 1; accent-color: #8ab4f8; }
+  .ctrl button {
+    background: rgba(138,180,248,.14); color: #8ab4f8; border: 1px solid rgba(138,180,248,.3);
+    border-radius: 7px; padding: 5px 10px; font-size: 11px; cursor: pointer; font-family: inherit; flex: 1;
+  }
+  .ctrl button:hover { background: rgba(138,180,248,.24); }
+  .ctrl button.on { background: #8ab4f8; color: #1a1d21; }
+  #hint { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
+    font-size: 11px; color: #6c7177; background: rgba(28,31,36,.7); padding: 5px 12px; border-radius: 20px; }
+</style>
+</head>
+<body>
+<canvas id="app"></canvas>
+<div id="panel">
+  <button id="btnPanelToggle" title="閉じる" style="position:absolute;top:10px;right:10px;width:24px;height:24px;padding:0;border-radius:6px;background:rgba(255,255,255,.08);color:#e8eaed;border:1px solid rgba(255,255,255,.15);cursor:pointer;font-size:15px;line-height:1;flex:none;">×</button>
+  <h1>美容室 改装 3Dモデル</h1>
+  <div class="sub">単位 cm／寸法はソース先頭の <b style="color:#ffd479">CONFIG</b> で編集</div>
+  <div class="dims" id="dims"></div>
+  <div class="ctrl">壁 <input id="opacity" type="range" min="0" max="100" value="100"></div>
+  <div class="ctrl">
+    <button id="btnCeiling">天井</button>
+    <button id="btnGrid" class="on">グリッド</button>
+  </div>
+  <div class="ctrl">
+    <button id="btnFurn" class="on">家具</button>
+    <button id="btnLabels" class="on">ラベル</button>
+  </div>
+  <div class="ctrl">
+    <button id="btnTop">真上から</button>
+    <button id="btnReset">視点リセット</button>
+  </div>
+  <div class="ctrl" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">
+    <button id="btnMove" class="on">移動</button>
+    <button id="btnRot">回転</button>
+    <button id="btnDeselect">解除</button>
+  </div>
+  <div class="ctrl">
+    <button id="btnLayoutReset">配置を初期化</button>
+  </div>
+  <div id="selBadge" style="display:none;font-size:11px;color:#1a1d21;background:#8ab4f8;border-radius:6px;padding:4px 8px;margin-top:6px;font-weight:700;"></div>
+</div>
+<button id="panelOpen" title="パネルを開く" style="position:fixed;top:16px;left:16px;z-index:11;display:none;width:40px;height:40px;border-radius:10px;background:rgba(28,31,36,.86);color:#8ab4f8;border:1px solid rgba(255,255,255,.12);cursor:pointer;font-size:18px;backdrop-filter:blur(8px);">☰</button>
+<div id="hint">物をクリックで選択 → 矢印=移動 / リング=回転（G=移動 R=回転 Esc=解除）　｜　何もない所をドラッグ=視点回転・ホイール=ズーム</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+/* ════════════════════════════════════════════════════════════
+   ▼▼▼  寸法はここだけ直せばOK（単位 = cm）  ▼▼▼
+   ════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  wallThickness: 10,    // 壁の厚み（黒い面）
+  wallHeight:    240,   // 壁の高さ
+  stepHeight:    15,    // シャンプーブースの段差
+
+  leftOffset:    32,    // 左端 → シャンプーブース まで
+
+  shampoo:  { width: 293, depth: 228, flip: true, cut: 60 },  // シャンプー（段差／台向き／右下の角カット量）
+  backroom: { width: 166, depth: 208, protrude: 64 },   // バックルーム（シャンプーとの境界壁が64cmでっぱり）
+  corridorGap:   82,                                    // バックルーム〜トイレ の通路
+  toilet:   { width: 142, depth: 142, doorWidth: 73 },  // トイレ（横幅は倉庫と共通）
+  storage:  { depth: 150, doorWidth: 73 },              // 倉庫（階段の半分・横幅＝トイレと同じ）
+  stairs:   { width: 150, depth: 150, shift: 0 },       // 階段（×印・残り半分／左詰め）
+
+  salon:    { width: 180, booths: 5, openWidth: 90, archStraight: 160 }, // 幅/室数/入口幅/アーチ直線部高さ
+
+  entrance: { width: 140, fromStairs: 10 },             // 入口：幅／階段右端からの離れ（×印の横）
+
+  targetDepth: 1050,    // 建物の奥行(Z)。各部屋の奥行はこの値に合わせて比例スケール（null で自動=実寸合計）
+
+  showFurniture: true,  // 家具の初期表示
+};
+/* ════════════════════════════════════════════════════════════
+   ▲▲▲  編集はここまで  ▲▲▲
+   ════════════════════════════════════════════════════════════ */
+
+const C = CONFIG, T = C.wallThickness, WH = C.wallHeight;
+
+// ---- 寸法の自動計算 ----
+// 各部屋の奥行を targetDepth に合わせて比例スケール（幅Xは据え置き）
+const rawDepth  = C.shampoo.depth + C.backroom.depth + C.corridorGap + C.toilet.depth + C.storage.depth + C.stairs.depth;
+const dScale    = (C.targetDepth || rawDepth) / rawDepth;
+const D = {
+  shampoo:  C.shampoo.depth  * dScale,
+  backroom: C.backroom.depth * dScale,
+  gap:      C.corridorGap    * dScale,
+  toilet:   C.toilet.depth   * dScale,
+  storage:  C.storage.depth  * dScale,
+  stairs:   C.stairs.depth   * dScale,
+};
+const zShampoo  = 0;
+const zBackroom = zShampoo  + D.shampoo;
+const zGap      = zBackroom + D.backroom;
+const zToilet   = zGap      + D.gap;
+const zStorage  = zToilet   + D.toilet;
+const zStairs   = zStorage  + D.storage;
+const totalLen  = zStairs   + D.stairs;                  // 建物の奥行(Z) = targetDepth
+
+const salonX0   = C.leftOffset + C.shampoo.width;        // 施術ストリップ左端 = シャンプー右端
+const totalWid  = salonX0 + C.salon.width;               // 建物の全幅(X)
+
+const roomW     = C.toilet.width;                        // トイレ＝倉庫 共通の横幅
+const stairsX0  = C.stairs.shift;                        // 階段 左端（少しずらす）
+const stairsX1  = stairsX0 + C.stairs.width;             // 階段 右端
+
+/* ---------- three.js 基本 ---------- */
+const canvas = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d21);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 1, 20000);
+const HOME = new THREE.Vector3(totalWid + 650, 850, totalLen + 700);
+camera.position.copy(HOME);
+const TARGET = new THREE.Vector3(totalWid / 2, 60, totalLen / 2);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.target.copy(TARGET);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444a52, 1.15));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(totalWid, WH * 6, totalLen * 0.3);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const sc = Math.max(totalWid, totalLen);
+Object.assign(sun.shadow.camera, { left: -sc, right: sc, top: sc, bottom: -sc, near: 1, far: sc * 6 });
+scene.add(sun);
+
+/* ---------- マテリアル ---------- */
+const MAT = {
+  floor:  new THREE.MeshStandardMaterial({ color: 0xe2dac9, roughness: 1.0 }),
+  wall:   new THREE.MeshStandardMaterial({ color: 0x2c2f34, roughness: 0.9 }), // 黒い壁
+  step:   new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.8 }), // シャンプー段差
+  booth:  new THREE.MeshStandardMaterial({ color: 0xf2ead9, roughness: 1.0 }),
+  stairs: new THREE.MeshStandardMaterial({ color: 0xb7a98f, roughness: 0.9 }),
+  ceil:   new THREE.MeshStandardMaterial({ color: 0xf2f4f6, roughness: 0.95, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+  mirror: new THREE.MeshStandardMaterial({ color: 0xaecbe0, roughness: 0.05, metalness: 0.9 }),
+  counter:new THREE.MeshStandardMaterial({ color: 0x9a8570, roughness: 0.7 }),
+  chair:  new THREE.MeshStandardMaterial({ color: 0x2c2f33, roughness: 0.6 }),
+  basin:  new THREE.MeshStandardMaterial({ color: 0xeef2f5, roughness: 0.3 }),
+  fixture:new THREE.MeshStandardMaterial({ color: 0xf4f6f8, roughness: 0.4 }),
+};
+
+const wallGroup = new THREE.Group();
+const furniture = new THREE.Group();
+furniture.visible = C.showFurniture;
+scene.add(wallGroup, furniture);
+
+const movables = [];                          // クリックで掴んで動かせる対象（グループ）
+
+/* ---------- ヘルパ：角(x0,z0)-(x1,z1)・高さ y0..y1 の箱 ---------- */
+function box(x0, x1, z0, z1, y0, y1, mat, grp = scene) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat);
+  m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  m.castShadow = m.receiveShadow = true;
+  grp.add(m); return m;
+}
+const wall = (x0, x1, z0, z1, h = WH) => box(x0, x1, z0, z1, 0, h, MAT.wall, wallGroup);
+// 縦の壁（右端 xR・厚さT）に、z方向の開口 [dz0,dz1] を空ける
+function wallV(xR, z0, z1, dz0, dz1) {
+  if (dz1 > dz0) { wall(xR - T, xR, z0, dz0); wall(xR - T, xR, dz1, z1); }
+  else wall(xR - T, xR, z0, z1);
+}
+// 横の壁（z0..z1）に、x方向の開口 [dx0,dx1] を空ける
+function wallH(z0, z1, x0, x1, dx0, dx1) {
+  if (dx1 > dx0) { wall(x0, dx0, z0, z1); wall(dx1, x1, z0, z1); }
+  else wall(x0, x1, z0, z1);
+}
+
+/* ---------- ラベル（スプライト） ---------- */
+const labels = [];
+function label(text, x, z, y = WH + 25, bg = 'rgba(20,22,26,.85)', fg = '#ffe6a6') {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 120;
+  const g = cv.getContext('2d');
+  g.font = 'bold 56px "Hiragino Sans", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = g.measureText(text).width + 60;
+  g.fillStyle = bg; g.beginPath(); g.roundRect((512 - w) / 2, 24, w, 72, 16); g.fill();
+  g.fillStyle = fg; g.fillText(text, 256, 60);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false }));
+  sp.scale.set(230, 54, 1); sp.position.set(x, y, z);
+  scene.add(sp); labels.push(sp); return sp;
+}
+
+/* ════════ 1. 床 ════════ */
+box(0, totalWid, 0, totalLen, -3, 0, MAT.floor);
+
+/* ════════ 2. 外壁 ════════ */
+wall(0, T, 0, totalLen);                          // 左
+wall(totalWid - T, totalWid, 0, totalLen);        // 右
+wall(0, totalWid, 0, T);                          // 上
+// 下側外壁：入口（×印=階段の横）を開口して2分割
+const entX0 = stairsX1 + C.entrance.fromStairs;         // 入口 左端（階段右端の横）
+const entX1 = Math.min(entX0 + C.entrance.width, salonX0); // 入口 右端（ブース壁まで）
+wall(0, entX0, totalLen - T, totalLen);           // 下（左：階段まで）
+wall(entX1, totalWid, totalLen - T, totalLen);    // 下（右：入口より右）
+
+/* ════════ 3. シャンプーブース（15cm段差・仕切りなし・施術ブース2側＝右下の角をカット） ════════ */
+(function () {
+  const x0 = C.leftOffset, x1 = salonX0, za = T, zb = zBackroom, cut = C.shampoo.cut;
+  const Q = (x, z) => [x, -z];                 // shape座標（rotation.x=-90で世界(x,z)へ）
+  const sh = new THREE.Shape();
+  sh.moveTo(...Q(x0, za));                      // 左上
+  sh.lineTo(...Q(x1, za));                      // 右上
+  sh.lineTo(...Q(x1, zb - cut));               // 右辺を下へ（カット手前まで）
+  sh.lineTo(...Q(x1 - cut, zb));               // 斜めカット（右下の角＝ブース2側）
+  sh.lineTo(...Q(x0, zb));                      // 左下
+  sh.lineTo(...Q(x0, za));                      // 閉じる
+  const g = new THREE.ExtrudeGeometry(sh, { depth: C.stepHeight, bevelEnabled: false });
+  const m = new THREE.Mesh(g, MAT.step);
+  m.rotation.x = -Math.PI / 2; m.castShadow = m.receiveShadow = true;
+  scene.add(m);
+})();
+label('シャンプーブース', (C.leftOffset + salonX0) / 2, zBackroom / 2 + 10);
+// シャンプー台 ×2（段差の上）
+function shampooUnit(cz) {
+  const y = C.stepHeight, cx = (C.leftOffset + salonX0) / 2;
+  const hd = C.shampoo.flip ? -1 : 1;       // 頭(ボウル)側の向き
+  box(cx - 75, cx + 75, cz - 36, cz + 36, y, y + 48, MAT.chair, furniture);     // ベッド
+  const fb = cx - hd * 69;                                                       // 背(足側)中心
+  box(fb - 6, fb + 6, cz - 36, cz + 36, y, y + 55, MAT.chair, furniture);        // 背
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(28, 18, 22, 20), MAT.basin);
+  bowl.position.set(cx + hd * 90, y + 36, cz); bowl.castShadow = true; furniture.add(bowl); // ボウル
+}
+shampooUnit(zBackroom * 0.34);
+shampooUnit(zBackroom * 0.70);
+
+/* ════════ 4. バックルーム（シャンプーとの境界壁＝64cmでっぱり／入口はトイレ側=下） ════════ */
+const bw = C.backroom.width, bMidZ = (zBackroom + zGap) / 2, bDoor = 73;
+wall(0, bw, zBackroom, zBackroom + T);                              // 上壁（シャンプーとの境界）
+wall(bw, bw + C.backroom.protrude, zBackroom, zBackroom + T);      // 64cmのでっぱり
+wall(bw - T, bw, zBackroom, zGap);                                 // 右壁（閉）
+wallH(zGap - T, zGap, 0, bw, bw - 10 - bDoor, bw - 10);            // 下壁（トイレ側）に入口
+label('バックルーム', bw / 2 - 10, bMidZ);
+
+/* ════════ 5. トイレ（入口はバックルーム側＝上壁） ════════ */
+const tw = roomW, tMidZ = (zToilet + zStorage) / 2, tDoor = C.toilet.doorWidth;
+wallH(zToilet, zToilet + T, 0, tw, tw - 10 - tDoor, tw - 10);   // 上壁（バックルーム側）に入口
+wall(0, tw, zStorage - T, zStorage);                           // 下壁（倉庫との境界）
+wall(tw - T, tw, zToilet, zStorage);                           // 右壁（閉）
+label('トイレ', tw / 2 - 10, tMidZ);
+// 便器
+box(tw / 2 - 22, tw / 2 + 22, zToilet + 20, zToilet + 75, 0, 40, MAT.fixture, furniture);
+
+/* ════════ 6. 倉庫（階段の半分・横幅＝トイレ・入口は上ベタ付け） ════════ */
+const sMidZ = (zStorage + zStairs) / 2, sDoor = C.storage.doorWidth;
+wallV(roomW, zStorage, zStairs, zStorage, zStorage + sDoor);   // 右壁＝入口を上にベタ付け
+wall(0, roomW, zStairs - T, zStairs);                          // 下壁（階段との境界）
+label('倉庫', roomW / 2 - 10, sMidZ);
+box(roomW / 2 - 30, roomW / 2 + 30, zStorage + 25, zStairs - 25, 0, 90, MAT.stairs, furniture); // 棚
+// 倉庫の扉（右壁の開口に建付け・通路側へ少し開く）
+(function () {
+  const matDoor = new THREE.MeshStandardMaterial({ color: 0xb9966b, roughness: 0.7 });
+  const piv = new THREE.Group(); piv.position.set(roomW, 0, zStorage + sDoor); // ヒンジ＝開口下端（反対側）
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(4, 200, sDoor), matDoor);
+  leaf.position.set(0, 100, -sDoor / 2); leaf.castShadow = true; piv.add(leaf);
+  const hd = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 12, 8), MAT.fixture);
+  hd.rotation.x = Math.PI / 2; hd.position.set(7, 100, -(sDoor - 14)); piv.add(hd); // 取っ手
+  piv.rotation.y = -0.6;                         // 少し開いた状態（反対側）
+  piv.userData.label = '倉庫の扉'; furniture.add(piv); movables.push(piv);
+})();
+
+/* ════════ 6b. 階段（×印 → 段板・少しずらす） ════════ */
+if (stairsX0 > 0) wall(stairsX0, stairsX0 + T, zStairs, totalLen); // 左壁（ずらした分）
+wall(stairsX1 - T, stairsX1, zStairs, totalLen);               // 右仕切り
+const steps = 9, run = (totalLen - zStairs) / steps;
+for (let i = 0; i < steps; i++) {
+  const z0 = zStairs + i * run;
+  box(stairsX0 + T, stairsX1 - T, z0, z0 + run, 0, (i + 1) * (WH * 0.55 / steps), MAT.stairs, furniture);
+}
+label('階段', (stairsX0 + stairsX1) / 2 - 10, (zStairs + totalLen) / 2);
+
+/* ════════ 入口（×印=階段の横・下側外壁の開口） ════════ */
+const matGlass = new THREE.MeshStandardMaterial({ color: 0x8fd0e6, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+box(entX0, entX1, totalLen - T + 2, totalLen - T + 6, 0, WH - 20, matGlass, furniture); // ガラス戸
+box(entX0 - 3, entX0 + 3, totalLen - T, totalLen, 0, WH, MAT.wall);                      // 方立(左)
+box(entX1 - 3, entX1 + 3, totalLen - T, totalLen, 0, WH, MAT.wall);                      // 方立(右)
+box(entX0, entX1, totalLen, totalLen + 60, -3, 1, MAT.stairs);                           // 前の踏み込み
+label('入口', (entX0 + entX1) / 2, totalLen + 35, 40, 'rgba(40,90,60,.9)', '#c8f0d8');
+
+/* ════════ 7. 施術ブース（10cm壁で均等5分割・通路側にアーチ入口・席の向き指定） ════════ */
+const bx0 = salonX0 + T;          // ブース内側 左(X)
+const bx1 = totalWid - T;         // ブース内側 右(X)
+const z0  = T, z1 = totalLen - T; // 上下の外壁の内側
+const n   = C.salon.booths;
+const boothDepth = ((z1 - z0) - (n - 1) * T) / n;
+
+// 各ブースの Z範囲と席の向き（ブース1=上向き(-Z) / 2〜5=下向き(+Z)）
+const boothList = [];
+for (let i = 0, zc = z0; i < n; i++) {
+  const a = zc, b = zc + boothDepth;
+  boothList.push({ i, a, b, fz: (i === 0 ? -1 : 1) });
+  zc = b + T;
+}
+
+// 椅子・鏡・カウンター（fz方向の壁の鏡を向く）
+function buildBoothFurniture(a, b, fz) {
+  const cx = (bx0 + bx1) / 2;                            // 中央
+  const mz0 = fz > 0 ? b - 6 : a, mz1 = fz > 0 ? b : a + 6;
+  box(cx - 42, cx + 42, mz0, mz1, 90, 195, MAT.mirror, furniture);              // 鏡
+  const cz0 = fz > 0 ? b - 42 : a, cz1 = fz > 0 ? b : a + 42;
+  box(cx - 46, cx + 46, cz0, cz1, 0, 75, MAT.counter, furniture);              // カウンター
+  const seatZ = (fz > 0 ? b : a) - fz * 66;
+  const chair = new THREE.Group();                                              // 椅子（掴んで動かせる）
+  box(cx - 24, cx + 24, seatZ - 24, seatZ + 24, 42, 50, MAT.chair, chair);      // 座面
+  const bz = seatZ - fz * 20;
+  box(cx - 24, cx + 24, bz - 4, bz + 4, 50, 92, MAT.chair, chair);              // 背もたれ
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 40, 12), MAT.chair);
+  pole.position.set(cx, 21, seatZ); pole.castShadow = true; chair.add(pole);
+  chair.userData.label = '椅子'; furniture.add(chair); movables.push(chair);
+  const ar = new THREE.Mesh(new THREE.ConeGeometry(14, 34, 4), new THREE.MeshBasicMaterial({ color: 0x8ab4f8 }));
+  ar.rotation.x = fz > 0 ? Math.PI / 2 : -Math.PI / 2;
+  ar.position.set(cx, 6, seatZ + fz * 52); furniture.add(ar);                   // 床矢印（席の向き）
+}
+
+// ロッカー（半分サイズ・背面を入口(通路)壁 bx0 に付け、全ブース -Z(上)側の角へ）
+const matLocker = new THREE.MeshStandardMaterial({ color: 0x8b8f96, roughness: 0.6, metalness: 0.2 });
+const LOCKER_D = 20, LOCKER_LEN = 30, LOCKER_H = 160;   // 半分サイズ
+function buildLocker(a, b) {
+  const g = new THREE.Group();                          // 掴んで動かせるようグループ化
+  const xb = bx0, xf = bx0 + LOCKER_D;                  // 背面=入口(通路)壁 bx0 / 前面はブース内へ(+X)
+  const z0 = a + 1, z1 = z0 + LOCKER_LEN;               // 全ブース共通で -Z(上)側の角
+  box(xb, xf, z0, z1, 0, LOCKER_H, matLocker, g);
+  for (const zz of [z0 + LOCKER_LEN * 0.33, z0 + LOCKER_LEN * 0.66]) {
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 14, 8), MAT.fixture);
+    h.rotation.x = Math.PI / 2; h.position.set(xf + 2, LOCKER_H * 0.5, zz); h.castShadow = true; g.add(h);
+  }
+  g.userData.label = 'ロッカー'; furniture.add(g); movables.push(g);
+}
+
+// 床・ラベル・家具・ロッカー・仕切り壁
+boothList.forEach(({ i, a, b, fz }) => {
+  box(bx0, bx1, a, b, 0, 1, MAT.booth);                 // ブース床
+  label('施術ブース' + (i + 1), (bx0 + bx1) / 2, (a + b) / 2, WH + 25, 'rgba(40,60,90,.9)', '#dbe9ff');
+  buildBoothFurniture(a, b, fz);
+  buildLocker(a, b);                                     // 入口側の壁・上の角にロッカー
+  if (i < n - 1) wall(bx0, bx1, b, b + T);              // 仕切り壁(10cm)
+});
+
+// 通路側(X=salonX0)の壁：各ブースにアーチ型の入口（ブース1=右(+Z) / 2〜5=左(-Z)・鏡の反対側）
+const OPEN_W = C.salon.openWidth, R = OPEN_W / 2, SH = C.salon.archStraight, MG = 30;
+// アーチ入口のドア（ブース内へ少し開く）
+const matBoothDoor = new THREE.MeshStandardMaterial({ color: 0xcdb89a, roughness: 0.5, transparent: true, opacity: 0.9 });
+function addBoothDoor(ocZ) {
+  const piv = new THREE.Group(); piv.position.set(salonX0, 0, ocZ + R);   // ヒンジ＝開口の+Z端
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(4, SH, OPEN_W), matBoothDoor); // 四角＝アーチ直線部に合わせる
+  leaf.position.set(2, SH / 2, -OPEN_W / 2); leaf.castShadow = true; piv.add(leaf);
+  const h = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 16, 8), MAT.fixture);
+  h.rotation.x = Math.PI / 2; h.position.set(6, SH / 2, -(OPEN_W - 12)); piv.add(h); // 取っ手
+  piv.rotation.y = 0.45;                                  // 通路側(-X)へ開く
+  piv.userData.label = 'ドア'; furniture.add(piv); movables.push(piv);
+}
+const frontShape = new THREE.Shape();
+frontShape.moveTo(0, 0); frontShape.lineTo(totalLen, 0); frontShape.lineTo(totalLen, WH); frontShape.lineTo(0, WH); frontShape.lineTo(0, 0);
+boothList.forEach(({ i, a, b, fz }) => {
+  const oc = fz > 0 ? (a + MG + R) : (b - MG - R);       // 入口中心（鏡と反対側）
+  const p = new THREE.Path();
+  p.moveTo(oc - R, 0); p.lineTo(oc - R, SH);
+  p.absarc(oc, SH, R, Math.PI, 0, true);                 // アーチ天
+  p.lineTo(oc + R, 0); p.lineTo(oc - R, 0);
+  frontShape.holes.push(p);
+  if (i !== 0) addBoothDoor(oc);                          // 入口にドア（ブース1は無し）
+});
+const frontWall = new THREE.Mesh(new THREE.ExtrudeGeometry(frontShape, { depth: T, bevelEnabled: false }), MAT.wall);
+frontWall.rotation.y = -Math.PI / 2; frontWall.position.x = salonX0 + T;
+frontWall.castShadow = frontWall.receiveShadow = true;
+wallGroup.add(frontWall);
+
+/* ════════ L字型の受付（角丸・倉庫の下／扉の開閉を避けて配置・移動可） ════════ */
+function buildReception() {
+  const ox = 155, oz = 815;                  // L字の外角（世界座標・倉庫の下、扉の開閉域より下）
+  const A = 105, B = 112, W = 42, R = 24, H = 95; // X腕/Z腕/天板幅/内角の丸み/高さ
+  const Q = (x, z) => [ox + x, -(oz + z)];   // shape座標（rotation.x=-90で世界(x,z)へ）
+  const sh = new THREE.Shape();
+  sh.moveTo(...Q(0, 0));
+  sh.lineTo(...Q(A, 0));
+  sh.lineTo(...Q(A, W));
+  sh.lineTo(...Q(W + R, W));
+  sh.quadraticCurveTo(...Q(W, W), ...Q(W, W + R));   // 内角を丸く
+  sh.lineTo(...Q(W, B));
+  sh.lineTo(...Q(0, B));
+  sh.lineTo(...Q(0, 0));
+  const g = new THREE.Group();
+  const matRec = new THREE.MeshStandardMaterial({ color: 0xcdb89a, roughness: 0.6 });
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: H, bevelEnabled: false }), matRec);
+  body.rotation.x = -Math.PI / 2; body.castShadow = body.receiveShadow = true; g.add(body);
+  const top = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 4, bevelEnabled: false }),
+    new THREE.MeshStandardMaterial({ color: 0x9a8570, roughness: 0.5 }));
+  top.rotation.x = -Math.PI / 2; top.position.y = H; top.castShadow = true; g.add(top);
+  g.userData.label = '受付'; furniture.add(g); movables.push(g);
+}
+buildReception();
+
+/* ════════ 天井 / グリッド ════════ */
+const ceiling = box(0, totalWid, 0, totalLen, WH, WH + T, MAT.ceil);
+ceiling.visible = false;
+const grid = new THREE.GridHelper(Math.max(totalWid, totalLen) * 1.4,
+  Math.round(Math.max(totalWid, totalLen) * 1.4 / 50), 0x3a4047, 0x262b30);
+grid.position.set(totalWid / 2, 0.5, totalLen / 2);
+scene.add(grid);
+
+/* ════════ 寸法ラベル ════════ */
+label(totalWid + ' (全幅)', totalWid / 2, -35, 40, 'rgba(20,22,26,.85)', '#8ab4f8');
+label(totalLen + ' (奥行)', -45, totalLen / 2, 40, 'rgba(20,22,26,.85)', '#8ab4f8');
+label('180', bx0 + 90, -35, 40, 'rgba(40,60,90,.9)', '#dbe9ff');
+
+document.getElementById('dims').innerHTML =
+  `全幅: <b>${totalWid}</b> cm／奥行: <b>${totalLen}</b> cm／高さ: <b>${WH}</b> cm<br>` +
+  `施術ブース: <b>${n}</b>室 ／ 1室 奥行 <b>${boothDepth.toFixed(1)}</b> cm`;
+
+/* ════════ UI ════════ */
+const $ = id => document.getElementById(id);
+$('opacity').oninput = e => {
+  const v = e.target.value / 100;
+  MAT.wall.opacity = v; MAT.wall.transparent = v < 1; MAT.wall.visible = v > 0;
+};
+const toggle = (btn, obj) => $(btn).onclick = () => { obj.visible = !obj.visible; $(btn).classList.toggle('on', obj.visible); };
+$('btnCeiling').onclick = () => { ceiling.visible = !ceiling.visible; $('btnCeiling').classList.toggle('on', ceiling.visible); };
+toggle('btnGrid', grid);
+toggle('btnFurn', furniture);
+$('btnLabels').onclick = () => { const on = !labels[0].visible; labels.forEach(l => l.visible = on); $('btnLabels').classList.toggle('on', on); };
+$('btnTop').onclick = () => { camera.position.set(totalWid / 2, Math.max(totalWid, totalLen) * 1.4, totalLen / 2 + 0.1); controls.target.set(totalWid / 2, 0, totalLen / 2); controls.update(); };
+$('btnReset').onclick = () => { camera.position.copy(HOME); controls.target.copy(TARGET); controls.update(); };
+$('btnPanelToggle').onclick = () => { $('panel').style.display = 'none'; $('panelOpen').style.display = 'block'; };
+$('panelOpen').onclick = () => { $('panel').style.display = ''; $('panelOpen').style.display = 'none'; };
+
+/* ════════ 物を選んで動かす（TransformControls） ════════ */
+const tcontrol = new TransformControls(camera, renderer.domElement);
+tcontrol.setTranslationSnap(5);                          // 5cm刻みで移動
+tcontrol.setRotationSnap(THREE.MathUtils.degToRad(15));  // 15°刻みで回転
+tcontrol.showX = true; tcontrol.showY = false; tcontrol.showZ = true; // 初期=水平移動
+tcontrol.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) saveLayout(); });
+scene.add(tcontrol);
+
+/* 配置の保存／復元。コードに固定した既定配置（DEFAULT_LAYOUT）＝全端末共通。
+   ブラウザで動かすと localStorage に上書き保存。「配置を初期化」で既定に戻る。 */
+const LS_KEY = 'salon_layout_v1';
+const DEFAULT_LAYOUT = [
+  { p: [142, 0, 794.875], r: [0, -0.6, 0] },                  // 倉庫の扉
+  { p: [0, 0, 0], r: [0, 0, 0] },                             // ブース1 椅子
+  { p: [505, 0, -320], r: [0, -1.5707963267948966, 0] },      // ブース1 ロッカー
+  { p: [0, 0, 0], r: [0, 0, 0] },                             // ブース2 椅子
+  { p: [115, 0, 750], r: [0, 1.5707963267948966, 0] },        // ブース2 ロッカー
+  { p: [0, 0, 0], r: [0, 0, 0] },                             // ブース3 椅子
+  { p: [-95, 0, 960], r: [0, 1.5707963267948966, 0] },        // ブース3 ロッカー
+  { p: [0, 0, 0], r: [0, 0, 0] },                             // ブース4 椅子
+  { p: [-300, 0, 1170], r: [0, 1.5707963267948966, 0] },      // ブース4 ロッカー
+  { p: [0, 0, 0], r: [0, 0, 0] },                             // ブース5 椅子
+  { p: [-505, 0, 1375], r: [0, 1.5707963267948966, 0] },      // ブース5 ロッカー
+  { p: [325, 0, 338], r: [0, 0.45, 0] },                      // ブース2 ドア
+  { p: [325, 0, 546], r: [0, 0.45, 0] },                      // ブース3 ドア
+  { p: [325, 0, 754], r: [0, 0.45, 0] },                      // ブース4 ドア
+  { p: [325, 0, 962], r: [0, 0.45, 0] },                      // ブース5 ドア
+];
+function saveLayout() {
+  const data = movables.map(m => ({ p: m.position.toArray(), r: [m.rotation.x, m.rotation.y, m.rotation.z] }));
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
+}
+function loadLayout() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) {}
+  if (!d) d = DEFAULT_LAYOUT;                                 // localStorageが無ければ固定配置
+  d.forEach((t, i) => { const m = movables[i]; if (m && t) { m.position.fromArray(t.p); m.rotation.set(t.r[0], t.r[1], t.r[2]); } });
+}
+loadLayout();
+
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+let selected = null;
+const badge = $('selBadge');
+function topMovable(o) { for (; o; o = o.parent) if (movables.includes(o)) return o; return null; }
+renderer.domElement.addEventListener('pointerdown', ev => {
+  if (tcontrol.dragging || ev.button !== 0) return;
+  ptr.x = ev.clientX / innerWidth * 2 - 1; ptr.y = -ev.clientY / innerHeight * 2 + 1;
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObjects(movables, true).find(h => topMovable(h.object));
+  if (hit) {
+    selected = topMovable(hit.object); tcontrol.attach(selected);
+    badge.textContent = '選択中: ' + (selected.userData.label || ''); badge.style.display = 'block';
+  } else { tcontrol.detach(); selected = null; badge.style.display = 'none'; }
+});
+function setMode(m) {
+  tcontrol.setMode(m);
+  const move = m === 'translate';
+  tcontrol.showX = move; tcontrol.showY = !move; tcontrol.showZ = move;
+  $('btnMove').classList.toggle('on', move); $('btnRot').classList.toggle('on', !move);
+}
+addEventListener('keydown', e => {
+  if (e.key === 'g' || e.key === 'G') setMode('translate');
+  if (e.key === 'r' || e.key === 'R') setMode('rotate');
+  if (e.key === 'Escape') { tcontrol.detach(); selected = null; badge.style.display = 'none'; }
+});
+$('btnMove').onclick = () => setMode('translate');
+$('btnRot').onclick = () => setMode('rotate');
+$('btnDeselect').onclick = () => { tcontrol.detach(); selected = null; badge.style.display = 'none'; };
+$('btnLayoutReset').onclick = () => { try { localStorage.removeItem(LS_KEY); } catch (e) {} location.reload(); };
+
+/* ════════ ループ ════════ */
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+
+console.log(`全幅 ${totalWid}cm × 奥行 ${totalLen}cm｜ブース1室 奥行 ${boothDepth.toFixed(1)}cm`);
+</script>
+</body>
+</html>
