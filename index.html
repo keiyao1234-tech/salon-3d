@@ -491,6 +491,7 @@ const DEFAULT_LAYOUT = [
   { p: [325, 0, 546], r: [0, 0.45, 0] },                      // ブース3 ドア
   { p: [325, 0, 754], r: [0, 0.45, 0] },                      // ブース4 ドア
   { p: [325, 0, 962], r: [0, 0.45, 0] },                      // ブース5 ドア
+  { p: [400, 0, 1670], r: [3.1416, 0, 3.1416] },              // 受付
 ];
 function saveLayout() {
   const data = movables.map(m => ({ p: m.position.toArray(), r: [m.rotation.x, m.rotation.y, m.rotation.z] }));
