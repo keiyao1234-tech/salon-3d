@@ -63,6 +63,7 @@
   </div>
   <div class="ctrl">
     <button id="btnLayoutReset">配置を初期化</button>
+    <button id="btnExport">配置を書き出す</button>
   </div>
   <div id="selBadge" style="display:none;font-size:11px;color:#1a1d21;background:#8ab4f8;border-radius:6px;padding:4px 8px;margin-top:6px;font-weight:700;"></div>
 </div>
@@ -532,6 +533,14 @@ $('btnMove').onclick = () => setMode('translate');
 $('btnRot').onclick = () => setMode('rotate');
 $('btnDeselect').onclick = () => { tcontrol.detach(); selected = null; badge.style.display = 'none'; };
 $('btnLayoutReset').onclick = () => { try { localStorage.removeItem(LS_KEY); } catch (e) {} location.reload(); };
+$('btnExport').onclick = () => {
+  const json = JSON.stringify(movables.map(m => ({
+    p: m.position.toArray().map(v => +v.toFixed(2)),
+    r: [+m.rotation.x.toFixed(4), +m.rotation.y.toFixed(4), +m.rotation.z.toFixed(4)]
+  })));
+  try { navigator.clipboard.writeText(json); } catch (e) {}
+  window.prompt('この配置データをコピーして貼り付けてください（コピー済み）:', json);
+};
 
 /* ════════ ループ ════════ */
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
